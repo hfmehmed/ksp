@@ -1,10 +1,9 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
-import com.github.jengelman.gradle.plugins.shadow.transformers.Transformer
+import com.github.jengelman.gradle.plugins.shadow.transformers.ResourceTransformer
 import com.github.jengelman.gradle.plugins.shadow.transformers.TransformerContext
 import org.apache.tools.zip.ZipEntry
 import org.apache.tools.zip.ZipOutputStream
 import org.gradle.jvm.tasks.Jar
-import java.io.InputStreamReader
 import java.util.zip.ZipFile
 
 evaluationDependsOn(":kotlin-analysis-api")
@@ -69,7 +68,7 @@ val prefixesToRelocate = listOf(
     Pair(it, "ksp." + it)
 }
 
-class AAServiceTransformer : Transformer {
+class AAServiceTransformer : ResourceTransformer {
     private val entries = HashMap<String, String>()
 
     // Names of extension points needs to be relocated, because ShadowJar does that, too.
@@ -85,13 +84,12 @@ class AAServiceTransformer : Transformer {
     }
 
     override fun hasTransformedResource(): Boolean {
-        return entries.size > 0
+        return entries.isNotEmpty()
     }
 
     override fun modifyOutputStream(os: ZipOutputStream, preserveFileTimestamps: Boolean) {
         fun putOneEntry(path: String, content: String) {
             val entry = ZipEntry(path)
-            entry.time = TransformerContext.getEntryTimestamp(preserveFileTimestamps, entry.time)
             os.putNextEntry(entry)
             os.write(content.toByteArray())
             os.closeEntry()
@@ -121,7 +119,7 @@ class AAServiceTransformer : Transformer {
 
     override fun transform(context: TransformerContext) {
         val path = context.path
-        val content = InputStreamReader(context.`is`).readText()
+        val content = context.inputStream.reader().use { it.readText() }
         entries[path] = content
     }
 }
