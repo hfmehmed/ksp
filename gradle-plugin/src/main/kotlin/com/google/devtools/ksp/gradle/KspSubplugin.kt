@@ -16,6 +16,7 @@
  */
 package com.google.devtools.ksp.gradle
 
+import com.android.build.api.dsl.KotlinMultiplatformAndroidCompilation
 import com.android.build.api.variant.Component
 import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.gradle.model.builder.KspModelBuilder
@@ -25,6 +26,7 @@ import com.google.devtools.ksp.gradle.utils.checkMinimumAgpVersion
 import com.google.devtools.ksp.gradle.utils.enableProjectIsolationCompatibleCodepath
 import com.google.devtools.ksp.gradle.utils.isAgpBuiltInKotlinUsed
 import com.google.devtools.ksp.gradle.utils.useLegacyVariantApi
+import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.UnknownTaskException
@@ -76,6 +78,9 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
         const val KSP_PLUGIN_CLASSPATH_CONFIGURATION_NAME = "kspPluginClasspath"
         const val KSP_PLUGIN_CLASSPATH_CONFIGURATION_NAME_NON_EMBEDDABLE = "kspPluginClasspathNonEmbeddable"
 
+        const val agpBasePluginId = "com.android.base"
+        const val agpKmpPluginId = "com.android.kotlin.multiplatform.library"
+
         @JvmStatic
         fun getKspOutputDir(project: Project, sourceSetName: String, target: String): Provider<Directory> =
             project.layout.buildDirectory.dir("generated/ksp/$target/$sourceSetName")
@@ -116,16 +121,19 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
         kspConfigurations = KspConfigurations(target)
         registry.register(KspModelBuilder())
 
-        target.plugins.withId("com.android.base") {
-            target.checkMinimumAgpVersion()
-            val androidComponents =
-                target.extensions.findByType(com.android.build.api.variant.AndroidComponentsExtension::class.java)!!
+        listOf(agpBasePluginId, agpKmpPluginId).forEach { pluginId ->
+            target.plugins.withId(pluginId) {
+                val componentsExtension =
+                    target.extensions.findByType(com.android.build.api.variant.AndroidComponentsExtension::class.java)
+                        ?: throw GradleException("Could not find the Android Gradle Plugin (AGP) extension.")
 
-            val selector = androidComponents.selector().all()
-            androidComponents.onVariants(selector) { variant ->
-                for (component in variant.components) {
-                    androidComponentCache.computeIfAbsent(component.name) {
-                        component
+                checkMinimumAgpVersion(componentsExtension.pluginVersion)
+
+                componentsExtension.onVariants { variant ->
+                    for (component in variant.components) {
+                        androidComponentCache.computeIfAbsent(component.name) {
+                            component
+                        }
                     }
                 }
             }
@@ -252,6 +260,49 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
                 androidComponent = component,
             )
         }
+
+        // android-kmp plugin
+        //afterEvaluate {
+            if (kotlinCompilation is KotlinMultiplatformAndroidCompilation) {
+//                if (component != null && project.canUseInternalKspApis()) {
+//                    (component.sources.java as? FlatSourceDirectoriesForJavaImpl)?.addGeneratedSourceDirectory(
+//                        taskProvider = kspTaskProvider,
+//                        wiredWith = { task -> task.kspConfig.javaOutputDir },
+//                        DirectoryEntry.Kind.KSP
+//                    )
+//
+//                    (component.sources.java as? FlatSourceDirectoriesForJavaImpl)?.addGeneratedSourceDirectory(
+//                        taskProvider = kspTaskProvider,
+//                        wiredWith = { task -> task.kspConfig.kotlinOutputDir },
+//                        DirectoryEntry.Kind.KSP
+//                    )
+//                }
+
+                val componentsExtension =
+                    kotlinCompilation.project.extensions.findByType(com.android.build.api.variant.AndroidComponentsExtension::class.java)
+
+                if (componentsExtension == null) {
+                    throw GradleException("Could not find the Android Gradle Plugin (AGP) extension.")
+                }
+
+
+                componentsExtension.onVariants { variant ->
+                    for (component in variant.components) {
+//                        (component.sources.java as? FlatSourceDirectoriesForJavaImpl)?.addGeneratedSourceDirectory(
+//                            taskProvider = kspTaskProvider,
+//                            wiredWith = { task -> task.kspConfig.javaOutputDir },
+//                            DirectoryEntry.Kind.KSP
+//                        )
+//
+//                        (component.sources.java as? FlatSourceDirectoriesForJavaImpl)?.addGeneratedSourceDirectory(
+//                            taskProvider = kspTaskProvider,
+//                            wiredWith = { task -> task.kspConfig.kotlinOutputDir },
+//                            DirectoryEntry.Kind.KSP
+//                        )
+                    }
+                }
+            }
+        //}
 
         return project.provider { emptyList() }
     }
