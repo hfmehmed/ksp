@@ -539,6 +539,7 @@ class KotlinSymbolProcessing(
                 kspConfig.removedSources,
                 kspConfig.changedClasses,
             )
+            incrementalContext.prepareOutputs()
             var allDirtyKSFiles = incrementalContext.calcDirtyFiles(allKSFiles).toList()
             var newKSFiles = allDirtyKSFiles
 

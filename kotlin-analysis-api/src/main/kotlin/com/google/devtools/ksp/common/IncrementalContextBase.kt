@@ -225,6 +225,30 @@ abstract class IncrementalContextBase(
         }
     }
 
+    /**
+     * Removes previously generated outputs in the cases where all of them are about to be
+     * regenerated, namely non-incremental runs and rebuilds.
+     *
+     * The Gradle plugin used to delete the output directory unconditionally before every run,
+     * which meant every untouched output had to be copied back from a backup afterwards. It no
+     * longer does, so KSP clears the directory itself, but only when clearing it is actually
+     * correct. In incremental runs stale outputs are swept individually instead, see
+     * [deleteStaleOutputs].
+     *
+     * Must be called before any output is generated.
+     */
+    fun prepareOutputs() {
+        if (!isIncremental || rebuild) {
+            kspOutputDir.deleteRecursively()
+        }
+        // Outputs are no longer backed up. Reclaim the space used by older versions of KSP.
+        File(cachesDir, "backups").let {
+            if (it.exists()) {
+                it.deleteRecursively()
+            }
+        }
+    }
+
     // Beware: no side-effects here; Caches should only be touched in updateCaches.
     fun calcDirtyFiles(ksFiles: List<KSFile>): Collection<KSFile> = closeFilesOnException {
         if (!isIncremental) {
@@ -338,37 +362,6 @@ abstract class IncrementalContextBase(
         sourceToOutputsMap.flush()
     }
 
-    private fun updateOutputs(outputs: Set<File>, cleanOutputs: Collection<File>) {
-        val outRoot = kspOutputDir
-        val bakRoot = File(cachesDir, "backups")
-
-        fun File.abs() = File(baseDir, path)
-        fun File.bak() = File(bakRoot, abs().toRelativeString(outRoot))
-
-        // Backing up outputs is necessary for two reasons:
-        //
-        // 1. Currently, outputs are always cleaned up in gradle plugin before compiler is called.
-        //    Untouched outputs need to be restore.
-        //
-        //    TODO: need a change in upstream to not clean files in gradle plugin.
-        //    Not cleaning files in gradle plugin has potentially fewer copies when processing succeeds.
-        //
-        // 2. Even if outputs are left from last compilation / processing, processors can still
-        //    fail and the outputs will need to be restored.
-
-        // Backup
-        outputs.forEach { generated ->
-            copyWithTimestamp(generated.abs(), generated.bak(), true)
-        }
-
-        // Restore non-dirty outputs
-        cleanOutputs.forEach { dst ->
-            if (dst !in outputs) {
-                copyWithTimestamp(dst.bak(), dst.abs(), true)
-            }
-        }
-    }
-
     private fun updateCaches(
         dirtyFiles: Collection<File>,
         outputs: Set<File>,
@@ -429,6 +422,12 @@ abstract class IncrementalContextBase(
     }
 
     fun closeFiles() {
+        // closeFiles() is only reached when processing did not complete successfully, so the
+        // output directory may hold partially written files. Outputs are no longer backed up,
+        // so instead mark the caches as stale: the next run is then a rebuild, which clears the
+        // output directory and regenerates everything from scratch.
+        cachesUpToDateFile.delete()
+
         symbolsMap.flush()
         onDemandImportsCache.clear()
         sealedMap.flush()
@@ -494,16 +493,47 @@ abstract class IncrementalContextBase(
 
         updateCaches(dirtySources, dirtyOutputs, dirtySourceToOutputs)
 
-        val cleanOutputs = mutableSetOf<File>()
+        // Outputs that survive this round are the ones just generated plus the ones belonging to
+        // sources that were not reprocessed. Anything else left in the output directory is stale
+        // and is deleted here.
+        //
+        // This deliberately works by omission rather than by looking up what became obsolete:
+        // processors may generate files without associating them with any source, so such files
+        // never appear in sourceToOutputsMap and cannot be found by lookup. Previously the Gradle
+        // plugin wiped the whole directory and only tracked outputs were copied back, which had
+        // the same effect at the cost of copying every untouched file.
+        val survivingOutputs = mutableSetOf<File>()
+        survivingOutputs.addAll(relativeOutputs)
         sourceToOutputsMap.keys.forEach { source ->
-            if (!isDirty(source))
-                cleanOutputs.addAll(sourceToOutputsMap[source]!!)
+            if (!isDirty(source)) {
+                survivingOutputs.addAll(sourceToOutputsMap[source]!!)
+            }
         }
         sourceToOutputsMap.flush()
-        updateOutputs(dirtyOutputs, cleanOutputs)
+        deleteStaleOutputs(survivingOutputs)
 
         cachesUpToDateFile.createNewFile()
         assert(cachesUpToDateFile.exists())
+    }
+
+    /**
+     * Deletes everything under [kspOutputDir] that is not in [survivingOutputs], together with any
+     * directory left empty as a result.
+     */
+    private fun deleteStaleOutputs(survivingOutputs: Set<File>) {
+        if (!kspOutputDir.exists()) {
+            return
+        }
+        val keep = survivingOutputs.mapTo(mutableSetOf()) { File(baseDir, it.path).absoluteFile }
+        kspOutputDir.walkBottomUp().forEach { file ->
+            when {
+                file.isFile && file.absoluteFile !in keep -> file.delete()
+                // Only prunes directories that are already empty, so this cannot remove a
+                // directory whose contents were kept.
+                file.isDirectory && file != kspOutputDir && file.list()?.isEmpty() == true ->
+                    file.delete()
+            }
+        }
     }
 
     /**
