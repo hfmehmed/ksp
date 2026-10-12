@@ -130,6 +130,7 @@ abstract class IncrementalContextBase(
         }
     }
 
+    private val noSourceWildcard = File(NoSourceWildcard(baseDir).filePath).relativeTo(baseDir)
     private val removedOutputsKey = File("<This is a virtual key for removed outputs; DO NOT USE>")
 
     private fun updateFromRemovedOutputs() {
@@ -178,7 +179,6 @@ abstract class IncrementalContextBase(
             }
             logFile.write("\n")
 
-            // Can be larger than the union of the above, because some outputs may have no source.
             logFile.write("All reprocessed outputs\n")
             outputs.forEach {
                 logFile.write("  $it\n")
@@ -282,6 +282,7 @@ abstract class IncrementalContextBase(
             symbolsMap,
             sourceToOutputsMap,
             anyChangesWildcard,
+            noSourceWildcard,
             removedOutputsKey
         ).propagate(initialSet)
 
@@ -321,6 +322,10 @@ abstract class IncrementalContextBase(
 
         dirtyFiles.filterNot { sourceToOutputs.containsKey(it) }.forEach {
             sourceToOutputsMap.removeRecursively(it)
+        }
+
+        if (!sourceToOutputs.containsKey(noSourceWildcard)) {
+            sourceToOutputsMap.remove(noSourceWildcard)
         }
 
         removedOutputs.forEach {
@@ -375,7 +380,7 @@ abstract class IncrementalContextBase(
         sourceToOutputs: Map<File, Set<File>>
     ) {
         // dirtyFiles may contain new files, which are unknown to sourceToOutputsMap.
-        val oldOutputs = dirtyFiles.flatMap { sourceToOutputsMap[it] ?: emptyList() }.distinct()
+        val oldOutputs = (dirtyFiles + noSourceWildcard).flatMap { sourceToOutputsMap[it] ?: emptyList() }.distinct()
         val removedOutputs = oldOutputs.filterNot { it in outputs }
         updateSourceToOutputs(dirtyFiles, outputs, sourceToOutputs, removedOutputs)
         updateLookupCache(dirtyFiles)
@@ -438,10 +443,8 @@ abstract class IncrementalContextBase(
         logFiles.forEach { it.close() }
     }
 
-    // TODO: add a wildcard for outputs with no source and get rid of the outputs parameter.
     fun updateCachesAndOutputs(
         dirtyFiles: Collection<KSFile>,
-        outputs: Set<File>,
         sourceToOutputs: Map<File, Set<File>>,
     ) = closeFilesOnException {
         if (!isIncremental)
@@ -462,9 +465,7 @@ abstract class IncrementalContextBase(
         // Assuming that the processors are deterministic, we are throwing away outputs from clean inputs, and
         // recovering them from the backup as a workaround for processors.
 
-        val relativeOutputs = outputs.map { it.toRelativeFile() }.toSet()
-        val unassociated = relativeOutputs - sourceToOutputs.values.flatten()
-        val dirties = HashSet(unassociated)
+        val dirties = HashSet<File>()
         fun markDirty(file: File) {
             dirties.add(file)
             sourceToOutputs[file]?.forEach {
@@ -474,7 +475,7 @@ abstract class IncrementalContextBase(
 
         fun isDirty(file: File) = file in dirties
 
-        val roots = mutableSetOf(anyChangesWildcard, removedOutputsKey)
+        val roots = mutableSetOf(anyChangesWildcard, noSourceWildcard, removedOutputsKey)
         roots.addAll(dirtySources)
         // TODO: find a better way to identify NoSourceFile
         roots.addAll(
@@ -490,7 +491,7 @@ abstract class IncrementalContextBase(
         val dirtySourceToOutputs = sourceToOutputs.filter { (src, _) ->
             isDirty(src)
         }
-        val dirtyOutputs = relativeOutputs.filter(::isDirty).toSet()
+        val dirtyOutputs = sourceToOutputs.values.flatten().filter(::isDirty).toSet()
 
         updateCaches(dirtySources, dirtyOutputs, dirtySourceToOutputs)
 
@@ -583,6 +584,7 @@ internal class DirtinessPropagator(
     private val symbolsMap: FileToSymbolsMap,
     private val sourceToOutputs: FileToFilesMap,
     private val anyChangesWildcard: File,
+    private val noSourceWildcard: File,
     private val removedOutputsKey: File
 ) {
     private val visitedFiles = mutableSetOf<File>()
@@ -590,7 +592,7 @@ internal class DirtinessPropagator(
 
     private val outputToSources = mutableMapOf<File, MutableSet<File>>().apply {
         sourceToOutputs.keys.forEach { source ->
-            if (source != anyChangesWildcard && source != removedOutputsKey) {
+            if (source != anyChangesWildcard && source != noSourceWildcard && source != removedOutputsKey) {
                 sourceToOutputs[source]!!.forEach { output ->
                     getOrPut(output) { mutableSetOf() }.add(source)
                 }

@@ -18,6 +18,7 @@
 package com.google.devtools.ksp.common.impl
 
 import com.google.devtools.ksp.common.NoSourceFile
+import com.google.devtools.ksp.common.NoSourceWildcard
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.symbol.KSClassDeclaration
@@ -41,10 +42,21 @@ class CodeGeneratorImpl(
 ) : CodeGenerator {
     private val fileMap = mutableMapOf<String, File>()
     private val fileOutputStreamMap = mutableMapOf<String, FileOutputStream>()
+    private val noSourceWildcard: KSFile = NoSourceWildcard(projectBase)
 
     private val separator = File.separator
 
-    val sourceToOutputs: MutableMap<File, MutableSet<File>> = mutableMapOf()
+    private val _sourceToOutputs: MutableMap<File, MutableSet<File>> = mutableMapOf()
+    private val associatedOutputs: MutableSet<File> = mutableSetOf()
+
+    val sourceToOutputs: Map<File, Set<File>>
+        get() {
+            if (!isIncremental) return _sourceToOutputs
+            val unassociated = outputs - associatedOutputs
+            if (unassociated.isEmpty()) return _sourceToOutputs
+            val noSourceKey = File(noSourceWildcard.filePath).relativeTo(projectBase)
+            return _sourceToOutputs + (noSourceKey to unassociated)
+        }
 
     // This function will also clear `fileOutputStreamMap` which will change the result of `generatedFile`
     fun closeFiles() {
@@ -192,12 +204,13 @@ class CodeGeneratorImpl(
     }
 
     private fun associate(sources: List<KSFile>, outputPath: File) {
-        if (!isIncremental)
+        if (!isIncremental || sources.isEmpty())
             return
 
         val output = outputPath.relativeTo(projectBase)
+        associatedOutputs.add(output)
         sources.forEach { source ->
-            sourceToOutputs.getOrPut(File(source.filePath).relativeTo(projectBase)) { mutableSetOf() }.add(output)
+            _sourceToOutputs.getOrPut(File(source.filePath).relativeTo(projectBase)) { mutableSetOf() }.add(output)
         }
     }
 

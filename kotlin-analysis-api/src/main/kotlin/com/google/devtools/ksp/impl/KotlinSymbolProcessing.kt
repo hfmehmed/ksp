@@ -664,7 +664,6 @@ class KotlinSymbolProcessing(
             if (!logger.hasError) {
                 incrementalContext.updateCachesAndOutputs(
                     allDirtyKSFiles,
-                    codeGenerator.outputs,
                     codeGenerator.sourceToOutputs
                 )
             } else {

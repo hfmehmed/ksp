@@ -1,6 +1,8 @@
 package com.google.devtools.ksp.processing.impl
 
 import com.google.devtools.ksp.common.AnyChanges
+import com.google.devtools.ksp.common.NoSourceFile
+import com.google.devtools.ksp.common.NoSourceWildcard
 import com.google.devtools.ksp.common.impl.CodeGeneratorImpl
 import com.google.devtools.ksp.processing.Dependencies
 import org.junit.Assert
@@ -125,5 +127,57 @@ class CodeGeneratorImplTest {
         } catch (e: java.lang.IllegalStateException) {
             Assert.assertEquals(e.message, "requested path is outside the bounds of the required directory")
         }
+    }
+
+    @Test
+    fun testCreatingFileWithNoSource() {
+        val noSourceKey = File(NoSourceWildcard(baseDir).filePath).relativeTo(baseDir)
+
+        // Calling associate with empty sources on an uncreated file should be a no-op
+        codeGenerator.associate(emptyList(), "a.b.c", "Uncreated", "kt")
+        Assert.assertFalse(codeGenerator.sourceToOutputs.containsKey(noSourceKey))
+
+        codeGenerator.createNewFile(Dependencies(false), "a.b.c", "NoSrc", "kt")
+        val expectedOutput = File("kotlin/a/b/c/NoSrc.kt")
+
+        Assert.assertEquals(setOf(expectedOutput), codeGenerator.sourceToOutputs[noSourceKey])
+
+        // Calling associate with empty sources on an unassociated created file should keep it in NoSourceWildcard
+        codeGenerator.associate(emptyList(), "a.b.c", "NoSrc", "kt")
+        Assert.assertEquals(setOf(expectedOutput), codeGenerator.sourceToOutputs[noSourceKey])
+
+        // Associating a source afterwards should remove the output from NoSourceWildcard
+        val srcFile = NoSourceFile(baseDir, "a.b.c.SomeClass")
+        val srcKey = File(srcFile.filePath).relativeTo(baseDir)
+        codeGenerator.associate(listOf(srcFile), "a.b.c", "NoSrc", "kt")
+
+        Assert.assertFalse(codeGenerator.sourceToOutputs.containsKey(noSourceKey))
+        Assert.assertEquals(setOf(expectedOutput), codeGenerator.sourceToOutputs[srcKey])
+
+        // Subsequent empty associate should not re-add to NoSourceWildcard when already associated
+        codeGenerator.associate(emptyList(), "a.b.c", "NoSrc", "kt")
+        Assert.assertFalse(codeGenerator.sourceToOutputs.containsKey(noSourceKey))
+        Assert.assertEquals(setOf(expectedOutput), codeGenerator.sourceToOutputs[srcKey])
+
+        // Associating a source before createNewFile(Dependencies(false), ...) should not add to NoSourceWildcard
+        val preAssociatedOutput = File("kotlin/a/b/c/PreAssociated.kt")
+        codeGenerator.associate(listOf(srcFile), "a.b.c", "PreAssociated", "kt")
+        codeGenerator.createNewFile(Dependencies(false), "a.b.c", "PreAssociated", "kt")
+        Assert.assertFalse(codeGenerator.sourceToOutputs.containsKey(noSourceKey))
+        Assert.assertEquals(setOf(expectedOutput, preAssociatedOutput), codeGenerator.sourceToOutputs[srcKey])
+
+        // Non-incremental CodeGeneratorImpl should keep sourceToOutputs empty even for no-source files
+        val nonIncrementalCodeGen = CodeGeneratorImpl(
+            File(baseDir, "classes"),
+            { File(baseDir, "java") },
+            File(baseDir, "kotlin"),
+            File(baseDir, "resources"),
+            baseDir,
+            AnyChanges(baseDir),
+            emptyList(),
+            false
+        )
+        nonIncrementalCodeGen.createNewFile(Dependencies(false), "a.b.c", "NonIncNoSrc", "kt")
+        Assert.assertTrue(nonIncrementalCodeGen.sourceToOutputs.isEmpty())
     }
 }

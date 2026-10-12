@@ -101,8 +101,29 @@ class NoSourceFile(baseDir: File, val fqn: String) : KSVirtualFile(baseDir, fqn)
     }
 }
 
+/**
+ * Used for outputs with no source.
+ */
+class NoSourceWildcard(baseDir: File) : KSVirtualFile(baseDir, "NoSourceWildcard") {
+    override val syntheticFileNamePrefix: String = SYNTHETIC_FILE_NAME_PREFIX
+
+    companion object {
+        fun isSyntheticFile(name: String, baseDir: File? = null): Boolean {
+            val noSourceWildcardFile = baseDir?.let(::NoSourceWildcard)
+            val processedName = name.removeSuffix(SYNTHETIC_FILE_NAME_SUFFIX)
+            return name == noSourceWildcardFile?.fileName ||
+                name == noSourceWildcardFile?.filePath ||
+                processedName.removePrefix(SYNTHETIC_FILE_NAME_PREFIX) == "NoSourceWildcard"
+        }
+
+        const val SYNTHETIC_FILE_NAME_PREFIX: String = "<"
+    }
+}
+
 fun isSyntheticFileName(name: String, baseDir: File? = null): Boolean {
-    return AnyChanges.isSyntheticFile(name, baseDir) || NoSourceFile.isSyntheticFile(name, baseDir)
+    return AnyChanges.isSyntheticFile(name, baseDir) ||
+        NoSourceFile.isSyntheticFile(name, baseDir) ||
+        NoSourceWildcard.isSyntheticFile(name, baseDir)
 }
 
 /**
