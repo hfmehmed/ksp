@@ -151,9 +151,6 @@ abstract class KspAATask @Inject constructor(
                     getCPChanges(
                         inputChanges,
                         listOf(
-                            kspConfig.sourceRoots,
-                            kspConfig.javaSourceRoots,
-                            kspConfig.commonSourceRoots,
                             kspConfig.classpathStructure,
                         ),
                         kspConfig.cachesDir.asFile.get(),

@@ -63,6 +63,7 @@ import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinWithJavaCompilation
 import org.jetbrains.kotlin.gradle.tasks.AbstractKotlinCompile
 import org.jetbrains.kotlin.gradle.tasks.AbstractKotlinCompileTool
 import java.io.File
+import java.io.ObjectInputStream
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
@@ -373,6 +374,31 @@ internal fun getClassStructureFiles(
     }.files
 }
 
+private fun isCachedClasspathCompatible(
+    cacheDir: File,
+    libs: List<File>,
+    processorCP: List<File>,
+): Boolean {
+    val structureFile = File(cacheDir, "classpath-structure.bin")
+    val cpEntriesFile = File(cacheDir, "classpath-entries.bin")
+    val apEntriesFile = File(cacheDir, "ap-classpath-entries.bin")
+    if (!structureFile.isFile || !cpEntriesFile.isFile || !apEntriesFile.isFile) return false
+    return try {
+        val prevLibs = ObjectInputStream(cpEntriesFile.inputStream().buffered()).use {
+            @Suppress("UNCHECKED_CAST")
+            it.readObject() as List<File>
+        }
+        if (prevLibs != libs) return false
+        val prevAp = ObjectInputStream(apEntriesFile.inputStream().buffered()).use {
+            @Suppress("UNCHECKED_CAST")
+            it.readObject() as List<File>
+        }
+        prevAp == processorCP
+    } catch (_: Throwable) {
+        false
+    }
+}
+
 // Reuse Kapt's infrastructure to compute affected names in classpath.
 // This is adapted from KaptTask.findClasspathChanges.
 internal fun findClasspathChanges(
@@ -382,10 +408,32 @@ internal fun findClasspathChanges(
     libs: List<File>,
     processorCP: List<File>,
 ): KaptClasspathChanges {
+    @Suppress("InternalKgpApiUsage")
+    if (changes is SourcesChanges.Unknown) {
+        cacheDir.deleteRecursively()
+        cacheDir.mkdirs()
+        val currentSnapshot =
+            ClasspathSnapshot.ClasspathSnapshotFactory.createCurrent(
+                cacheDir,
+                libs,
+                processorCP,
+                allDataFiles
+            )
+        currentSnapshot.writeToCache()
+        return KaptClasspathChanges.Unknown
+    }
+
     cacheDir.mkdirs()
 
     val changedFiles =
-        (changes as? SourcesChanges.Known)?.let { it.modifiedFiles + it.removedFiles }?.toSet() ?: allDataFiles
+        (changes as? SourcesChanges.Known)?.let { it.modifiedFiles + it.removedFiles }?.filterTo(LinkedHashSet()) {
+            it.extension != "kt" && it.extension != "java" && !it.isDirectory
+        } ?: allDataFiles
+
+    @Suppress("InternalKgpApiUsage")
+    if (changedFiles.isEmpty() && isCachedClasspathCompatible(cacheDir, libs, processorCP)) {
+        return KaptClasspathChanges.Known(emptySet())
+    }
 
     val loadedPrevious = ClasspathSnapshot.ClasspathSnapshotFactory.loadFrom(cacheDir)
     val previousAndCurrentDataFiles = lazy { loadedPrevious.getAllDataFiles() + allDataFiles }
@@ -414,7 +462,7 @@ internal fun findClasspathChanges(
         )
 
     val classpathChanges = currentSnapshot.diff(previousSnapshot, changedFiles)
-    if (classpathChanges is KaptClasspathChanges.Unknown || changes is SourcesChanges.Unknown) {
+    if (classpathChanges is KaptClasspathChanges.Unknown) {
         cacheDir.deleteRecursively()
         cacheDir.mkdirs()
     }

@@ -28,6 +28,7 @@ dependencies {
     implementation(project(":api"))
     implementation(project(":common-deps"))
     testImplementation(gradleApi())
+    testImplementation(libs.kotlin.gradlePlugin)
     testImplementation(project(":api"))
     testImplementation(libs.junit4)
     testImplementation(libs.google.truth)
